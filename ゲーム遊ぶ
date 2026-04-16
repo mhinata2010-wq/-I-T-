@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ディビジョン・ピンポン:アルティメット・リベンジ</title>
+    <style>
+        body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #050505; color: white; font-family: 'Arial Black', sans-serif; overflow: hidden; }
+        #container { position: relative; }
+        canvas { border: 4px solid #fff; background-color: #000; box-shadow: 0 0 30px rgba(255, 0, 0, 0.4); display: block; }
+        #menu {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 20;
+        }
+        .btn {
+            width: 280px; padding: 15px; margin: 10px; border: 2px solid #fff;
+            background: transparent; color: white; font-size: 20px; cursor: pointer;
+            transition: 0.3s; font-family: 'Arial Black', sans-serif;
+        }
+        .btn:hover { background: white; color: black; transform: scale(1.05); }
+        #btn-easy { border-color: #00ff00; color: #00ff00; }
+        #btn-normal { border-color: #ffff00; color: #ffff00; }
+        #btn-hard { border-color: #ff0000; color: #ff0000; }
+    </style>
+</head>
+<body>
+    <div style="position: absolute; top: 10px; text-align: center; width: 100%;">
+        <div id="msg" style="color: #ff0000; font-size: 16px;">4点差で超巨大な「赤い壁」が出現!</div>
+        <div style="font-size: 45px;">
+            <span style="color: #0088ff;">P</span> <span id="pScore">0</span> - <span id="cScore">0</span> <span style="color: #ff3300;">CP</span>
+        </div>
+    </div>
+
+    <div id="container">
+        <canvas id="gameCanvas" width="800" height="450"></canvas>
+        <div id="menu">
+            <h1 style="margin-bottom: 10px; color: #ff0000;">ULTIMATE REVENGE</h1>
+            <p style="margin-bottom: 20px; color: #aaa;">4点差で出現する赤い長方形を大幅に延長</p>
+            <button class="btn" id="btn-easy">EASY (パドル:最大)</button>
+            <button class="btn" id="btn-normal">NORMAL (パドル:中)</button>
+            <button class="btn" id="btn-hard">HARD (パドル:小)</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menu = document.getElementById('menu');
+
+        const ballSize = 8;
+        const wallWidth = 40; 
+        const PLAYER_SPEED = 15;
+        
+        let playerHeight = 75;
+        const cpHeight = 75;
+        
+        let ballBaseSpeed = 7;
+        let balls = [];
+        let redIcons = [];
+        let greenIcons = [];
+        let playerY = 185, cpY = 185;
+        let wallHeight = 0;
+        let wallGrowSpeed = 0.7;
+        let pScore = 0, cScore = 0;
+        let spawnedGreenTotal = 0;
+        let gameRunning = false;
+        const WIN_SCORE = 10;
+
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            if(["ArrowUp", "ArrowDown"].includes(e.code)) e.preventDefault();
+            keys[e.code] = true;
+        });
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        document.getElementById('btn-easy').onclick = () => startGame(160);
+        document.getElementById('btn-normal').onclick = () => startGame(110);
+        document.getElementById('btn-hard').onclick = () => startGame(75);
+
+        function startGame(h) {
+            playerHeight = h;
+            menu.style.display = 'none';
+            gameRunning = true;
+            resetGame();
+        }
+
+        function createBall(toRight = true, x = 400, y = null) {
+            return {
+                x: x,
+                y: y || 100 + Math.random() * 250,
+                vx: toRight ? ballBaseSpeed : -ballBaseSpeed,
+                vy: (Math.random() - 0.5) * (ballBaseSpeed * 1.5),
+                color: "#fff",
+                isFire: false
+            };
+        }
+
+        function resetGame() {
+            balls = [];
+            for(let i=0; i<3; i++) balls.push(createBall(i % 2 === 0));
+            redIcons = [];
+            greenIcons = [];
+            spawnedGreenTotal = 0;
+            wallHeight = 0;
+            pScore = 0;
+            cScore = 0;
+            playerY = (canvas.height - playerHeight) / 2;
+        }
+
+        function manageIcons() {
+            redIcons = [];
+            const diff = pScore - cScore;
+
+            // ★ 超巨大・赤い長方形のロジック(4点差負け)
+            if (diff <= -4) {
+                // Pが4点差以上負け:左側に長い壁
+                redIcons.push({ x: 150, y: canvas.height/2, active: true, type: 'giant-rect' });
+            } else if (diff >= 4) {
+                // CPが4点差以上負け:右側に長い壁
+                redIcons.push({ x: 650, y: canvas.height/2, active: true, type: 'giant-rect' });
+            } else {
+                // 通常モード(2点差以上で三角形)
+                const wallRatio = wallHeight / canvas.height;
+                if (wallRatio >= 0.7 && Math.abs(diff) >= 2) {
+                    redIcons.push({ x: diff > 0 ? 650 : 150, y: 150 + Math.random()*150, active: true, type: 'tri' });
+                }
+            }
+
+            // 緑アイコン
+            if ((pScore >= 3 || cScore >= 3) && spawnedGreenTotal < 3 && greenIcons.length === 0) {
+                greenIcons.push({ x: 250 + Math.random() * 300, y: 50 + Math.random() * 350, active: true });
+                spawnedGreenTotal++;
+            }
+        }
+
+        function update() {
+            if (!gameRunning) return;
+
+            if (keys['ArrowUp']) playerY -= PLAYER_SPEED;
+            if (keys['ArrowDown']) playerY += PLAYER_SPEED;
+            playerY = Math.max(0, Math.min(canvas.height - playerHeight, playerY));
+
+            wallHeight += wallGrowSpeed;
+            if (wallHeight > canvas.height + 50) wallHeight = 0;
+
+            manageIcons();
+
+            for (let i = balls.length - 1; i >= 0; i--) {
+                let ball = balls[i];
+                ball.x += ball.vx;
+                ball.y += ball.vy;
+
+                if (ball.y <= ballSize || ball.y >= canvas.height - ballSize) {
+                    ball.vy *= -1;
+                    ball.y = (ball.y <= ballSize) ? ballSize : canvas.height - ballSize;
+                }
+
+                if (ball.vx < 0 && ball.x < 65 && ball.x > 15) {
+                    if (ball.y > playerY - 5 && ball.y < playerY + playerHeight + 5) {
+                        ball.vx = Math.abs(ball.vx) + 0.3;
+                        ball.x = 66;
+                        ball.isFire = false; ball.color = "#fff";
+                    }
+                }
+
+                if (ball.vx > 0 && ball.x > 735 && ball.x < 785) {
+                    if (ball.y > cpY - 5 && ball.y < cpY + cpHeight + 5) {
+                        ball.vx = -(Math.abs(ball.vx) + 0.3);
+                        ball.x = 734;
+                        ball.isFire = false; ball.color = "#fff";
+                    }
+                }
+
+                // 赤アイコン判定
+                redIcons.forEach(icon => {
+                    if (icon.active) {
+                        let hit = false;
+                        if (icon.type === 'giant-rect') {
+                            // ★ 巨大長方形の判定 (幅25px, 高さ220px)
+                            if (Math.abs(ball.x - icon.x) < 25 && Math.abs(ball.y - icon.y) < 110) hit = true;
+                        } else {
+                            if (Math.hypot(ball.x - icon.x, ball.y - icon.y) < 30) hit = true;
+                        }
+                        if (hit) {
+                            ball.isFire = true; ball.color = "#ff0000"; 
+                            // 巨大モードの時はアイコンを消さない(常に赤くし続ける)
+                            if (icon.type !== 'giant-rect') icon.active = false;
+                        }
+                    }
+                });
+
+                greenIcons.forEach((icon, idx) => {
+                    if (icon.active && Math.hypot(ball.x - icon.x, ball.y - icon.y) < 30) {
+                        icon.active = false; greenIcons.splice(idx, 1);
+                        balls.push(createBall(ball.vx > 0, ball.x, ball.y));
+                    }
+                });
+
+                if (!ball.isFire) {
+                    let wTop = (canvas.height - wallHeight) / 2;
+                    let wBottom = wTop + wallHeight;
+                    if (ball.y > wTop && ball.y < wBottom) {
+                        if (ball.vx > 0 && ball.x + ballSize > 400 - wallWidth/2 && ball.x < 400) {
+                            ball.vx *= -1; ball.x = 400 - wallWidth/2 - ballSize - 1;
+                        } else if (ball.vx < 0 && ball.x - ballSize < 400 + wallWidth/2 && ball.x > 400) {
+                            ball.vx *= -1; ball.x = 400 + wallWidth/2 + ballSize + 1;
+                        }
+                    }
+                }
+
+                if (ball.x < 0) {
+                    cScore++; balls.splice(i, 1);
+                    if (balls.length < 3) balls.push(createBall(true));
+                } else if (ball.x > canvas.width) {
+                    pScore++; balls.splice(i, 1);
+                    if (balls.length < 3) balls.push(createBall(false));
+                }
+            }
+
+            if (balls.length > 0) {
+                let target = balls.reduce((a, b) => Math.abs(a.x - 800) < Math.abs(b.x - 800) ? a : b);
+                cpY += (target.y - cpHeight/2 - cpY) * 0.15;
+                cpY = Math.max(0, Math.min(canvas.height - cpHeight, cpY));
+            }
+
+            document.getElementById('pScore').innerText = pScore;
+            document.getElementById('cScore').innerText = cScore;
+
+            if (pScore >= WIN_SCORE || cScore >= WIN_SCORE) {
+                gameRunning = false;
+                setTimeout(() => {
+                    alert(pScore >= WIN_SCORE ? "大逆転勝利!" : "力及ばず...");
+                    location.reload();
+                }, 100);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.fillRect(400 - wallWidth/2, (canvas.height - wallHeight)/2, wallWidth, wallHeight);
+
+            // 赤アイコンの描画
+            redIcons.forEach(icon => {
+                ctx.fillStyle = "#ff0000";
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = "#ff0000";
+                if (icon.type === 'giant-rect') {
+                    // ★ 巨大長方形 (縦に長い)
+                    ctx.fillRect(icon.x - 12, icon.y - 110, 24, 220);
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(icon.x, icon.y - 15);
+                    ctx.lineTo(icon.x + 15, icon.y + 15);
+                    ctx.lineTo(icon.x - 15, icon.y + 15);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                ctx.shadowBlur = 0;
+            });
+
+            greenIcons.forEach(icon => {
+                if(icon.active) {
+                    ctx.fillStyle = "#00ff00";
+                    ctx.shadowBlur = 15; ctx.shadowColor = "#00ff00";
+                    ctx.beginPath(); ctx.arc(icon.x, icon.y, 12, 0, Math.PI*2); ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            });
+
+            ctx.fillStyle = '#0088ff'; ctx.fillRect(20, playerY, 40, playerHeight);
+            ctx.fillStyle = '#ff3300'; ctx.fillRect(canvas.width - 60, cpY, 40, cpHeight);
+
+            balls.forEach(ball => {
+                ctx.fillStyle = ball.color;
+                if(ball.isFire) { ctx.shadowBlur = 15; ctx.shadowColor = "#ff0000"; }
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ballSize, 0, Math.PI * 2); ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
